@@ -94,7 +94,13 @@ def home():
                 <label>Password</label>
                 <input type="password" name="password" required />
 
-                <label>Upload Excel (.xlsx)</label>
+              <label>
+    Upload Excel (.xlsx) or download our Default Excel Format 
+    <a href="/download-template" style="color:#2563eb; font-weight:600; text-decoration:none;">
+        HERE
+    </a>
+</label>
+
                 <input type="file" name="excel" accept=".xlsx" required />
 
                 <button type="submit">Generate PDFs (ZIP)</button>
@@ -274,4 +280,5 @@ async def generate(password: str = Form(...), excel: UploadFile = File(...)):
     zip_buf.seek(0)
     headers = {"Content-Disposition": f'attachment; filename="{OUTPUT_ZIP_NAME}"'}
     return StreamingResponse(zip_buf, media_type="application/zip", headers=headers)
+
 
