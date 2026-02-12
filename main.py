@@ -102,6 +102,9 @@ def home():
                     • Template must exist as: <code>{TEMPLATE_NAME}</code><br/>
                     • Contractor copies will be inside ZIP folder: <code>{CONTRACTOR_FOLDER}/</code><br/>
                     • Keep the Excel header row exactly the same (including line breaks).
+                    • Hosted on a free server, this web app (built exclusively for InfiniteAccountingServicesInc)
+                      is not available 24/7 and goes offline after 15 minutes of inactivity.
+                    • Please inform the developer before each use.
                 </div>
             </form>
         </div>
@@ -290,3 +293,4 @@ async def generate(password: str = Form(...), excel: UploadFile = File(...)):
     zip_buf.seek(0)
     headers = {"Content-Disposition": f'attachment; filename="{OUTPUT_ZIP_NAME}"'}
     return StreamingResponse(zip_buf, media_type="application/zip", headers=headers)
+
