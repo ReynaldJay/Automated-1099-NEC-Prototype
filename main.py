@@ -12,9 +12,12 @@ from pypdf.generic import NameObject, TextStringObject, BooleanObject
 # -----------------------
 # CONFIG
 # -----------------------
+# Use Render env var APP_PASSWORD if set, otherwise fallback:
 PASSWORD = os.getenv("APP_PASSWORD", "InfiniteAccountingServicesInc")
 
 TEMPLATE_NAME = "1099 NEC FORM.pdf"
+DEFAULT_EXCEL_NAME = "1099 NEC Default Format.xlsx"
+
 OUTPUT_ZIP_NAME = "1099_output.zip"
 CONTRACTOR_FOLDER = "Contractor's Copy"
 
@@ -48,21 +51,6 @@ app = FastAPI()
 # UI
 # -----------------------
 @app.get("/", response_class=HTMLResponse)
-@app.get("/download-template")
-def download_template():
-    template_path = os.path.join(os.getcwd(), "1099 NEC Default Format.xlsx")
-
-    if not os.path.exists(template_path):
-        raise HTTPException(status_code=404, detail="Default Excel format not found on server.")
-
-    return StreamingResponse(
-        open(template_path, "rb"),
-        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        headers={
-            "Content-Disposition": 'attachment; filename="1099 NEC Default Format.xlsx"'
-        },
-    )
-
 def home():
     return f"""
     <html>
@@ -85,6 +73,14 @@ def home():
             }}
             .tip {{ margin-top: 14px; font-size: 13px; color:#6b7280; line-height: 1.5; }}
             code {{ background:#f3f4f6; padding:2px 6px; border-radius:6px; }}
+            a.link {{
+                color:#2563eb;
+                font-weight:700;
+                text-decoration:none;
+            }}
+            a.link:hover {{
+                text-decoration:underline;
+            }}
         </style>
     </head>
     <body>
@@ -94,13 +90,10 @@ def home():
                 <label>Password</label>
                 <input type="password" name="password" required />
 
-              <label>
-    Upload Excel (.xlsx) or download our Default Excel Format 
-    <a href="/download-template" style="color:#2563eb; font-weight:600; text-decoration:none;">
-        HERE
-    </a>
-</label>
-
+                <label>
+                    Upload Excel (.xlsx) or download our Default Excel Format
+                    <a class="link" href="/download-template">HERE</a>
+                </label>
                 <input type="file" name="excel" accept=".xlsx" required />
 
                 <button type="submit">Generate PDFs (ZIP)</button>
@@ -115,6 +108,23 @@ def home():
     </body>
     </html>
     """
+
+
+# -----------------------
+# DOWNLOAD DEFAULT EXCEL
+# -----------------------
+@app.get("/download-template")
+def download_template():
+    path = os.path.join(os.getcwd(), DEFAULT_EXCEL_NAME)
+
+    if not os.path.exists(path):
+        raise HTTPException(status_code=404, detail="Default Excel format not found on server.")
+
+    return StreamingResponse(
+        open(path, "rb"),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{DEFAULT_EXCEL_NAME}"'},
+    )
 
 
 # -----------------------
@@ -201,7 +211,7 @@ def write_full_pdf_bytes(template_path: str, row: pd.Series) -> bytes:
 
 def contractor_copy_bytes(full_pdf: bytes) -> bytes:
     """
-    ✅ FIXED: Keep AcroForm + field values by cloning entire doc then removing pages.
+    Keep AcroForm + field values by cloning entire doc then removing pages.
     Contractor copy = pages 3-6 only (drop first 2 pages).
     """
     reader = PdfReader(io.BytesIO(full_pdf))
@@ -280,5 +290,3 @@ async def generate(password: str = Form(...), excel: UploadFile = File(...)):
     zip_buf.seek(0)
     headers = {"Content-Disposition": f'attachment; filename="{OUTPUT_ZIP_NAME}"'}
     return StreamingResponse(zip_buf, media_type="application/zip", headers=headers)
-
-
