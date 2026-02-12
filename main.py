@@ -48,6 +48,21 @@ app = FastAPI()
 # UI
 # -----------------------
 @app.get("/", response_class=HTMLResponse)
+@app.get("/download-template")
+def download_template():
+    template_path = os.path.join(os.getcwd(), "1099 NEC Default Format.xlsx")
+
+    if not os.path.exists(template_path):
+        raise HTTPException(status_code=404, detail="Default Excel format not found on server.")
+
+    return StreamingResponse(
+        open(template_path, "rb"),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={
+            "Content-Disposition": 'attachment; filename="1099 NEC Default Format.xlsx"'
+        },
+    )
+
 def home():
     return f"""
     <html>
@@ -259,3 +274,4 @@ async def generate(password: str = Form(...), excel: UploadFile = File(...)):
     zip_buf.seek(0)
     headers = {"Content-Disposition": f'attachment; filename="{OUTPUT_ZIP_NAME}"'}
     return StreamingResponse(zip_buf, media_type="application/zip", headers=headers)
+
