@@ -12,17 +12,14 @@ from pypdf.generic import NameObject, TextStringObject, BooleanObject
 # -----------------------
 # CONFIG
 # -----------------------
-# Use Render env var APP_PASSWORD if set, otherwise fallback:
 PASSWORD = os.getenv("APP_PASSWORD", "InfiniteAccountingServicesInc")
 
 TEMPLATE_NAME = "1099 NEC FORM.pdf"
 OUTPUT_ZIP_NAME = "1099_output.zip"
 CONTRACTOR_FOLDER = "Contractor's Copy"
 
-# Replicate values into these copies (all are on the IRS 1099-NEC template)
 COPIES = ["CopyA[0]", "Copy1[0]", "CopyB[0]", "Copy2[0]"]
 
-# Excel header -> PDF field name (CopyA field names)
 MAP_1099 = {
     "FOR CALENDAR\nYEAR": "topmostSubform[0].CopyA[0].PgHeader[0].CalendarYear[0].f1_1[0]",
     "PAYER’S name, street address, city or town, state or province, country, ZIP\nor foreign postal code, and telephone no.": "topmostSubform[0].CopyA[0].LeftCol[0].f1_2[0]",
@@ -36,13 +33,11 @@ MAP_1099 = {
     "7 State\nincome": "topmostSubform[0].CopyA[0].RightCol[0].Box7_ReadOrder[0].f1_16[0]",
 }
 
-# These columns should be formatted with commas + 2 decimals
 AMOUNT_HEADERS = {
     "1 Nonemployee\ncompensation",
     "7 State\nincome",
 }
 
-# Required columns to generate filenames / core output
 COL_RECIPIENT = "RECIPIENT’S name"
 COL_YEAR = "FOR CALENDAR\nYEAR"
 
@@ -90,9 +85,9 @@ def home():
                 <button type="submit">Generate PDFs (ZIP)</button>
 
                 <div class="tip">
-                    • Template must exist on the server as: <code>{TEMPLATE_NAME}</code><br/>
-                    • Contractor copies will be inside the ZIP folder: <code>{CONTRACTOR_FOLDER}/</code><br/>
-                    • Keep the Excel header row exactly the same (spelling + line breaks) or fields won’t match.
+                    • Template must exist as: <code>{TEMPLATE_NAME}</code><br/>
+                    • Contractor copies will be inside ZIP folder: <code>{CONTRACTOR_FOLDER}/</code><br/>
+                    • Keep the Excel header row exactly the same (including line breaks).
                 </div>
             </form>
         </div>
@@ -114,7 +109,6 @@ def is_blank(x) -> bool:
 
 
 def normalize_amount(x) -> str:
-    # Always commas + 2 decimals; blank becomes 0.00
     if is_blank(x):
         return "0.00"
     try:
@@ -142,10 +136,6 @@ def safe_year_value(x) -> str:
 
 
 def sibling_field(copya_field: str, target_copy: str) -> str:
-    """
-    Replace CopyA segment with other copy segment.
-    In this IRS template, CopyA uses f1_ fields, other copies use f2_ fields.
-    """
     out = copya_field.replace("CopyA[0]", target_copy)
     if target_copy != "CopyA[0]":
         out = out.replace(".f1_", ".f2_")
@@ -161,14 +151,11 @@ def set_field_value(writer: PdfWriter, fields: dict, name: str, value: str):
 
 
 def write_full_pdf_bytes(template_path: str, row: pd.Series) -> bytes:
-    """
-    Fill CopyA fields based on Excel headers, replicate into all copies, return full PDF bytes.
-    """
     reader = PdfReader(template_path)
     writer = PdfWriter()
     writer.clone_document_from_reader(reader)
 
-    # Force appearances (helps some viewers show values)
+    # Force appearances
     if "/AcroForm" in writer._root_object:
         writer._root_object[NameObject("/AcroForm")].update({NameObject("/NeedAppearances"): BooleanObject(True)})
 
@@ -193,25 +180,33 @@ def write_full_pdf_bytes(template_path: str, row: pd.Series) -> bytes:
 
 def contractor_copy_bytes(full_pdf: bytes) -> bytes:
     """
+    ✅ FIXED: Keep AcroForm + field values by cloning entire doc then removing pages.
     Contractor copy = pages 3-6 only (drop first 2 pages).
     """
     reader = PdfReader(io.BytesIO(full_pdf))
     writer = PdfWriter()
+    writer.clone_document_from_reader(reader)
 
-    for i in range(2, len(reader.pages)):  # keep pages 3..end
-        writer.add_page(reader.pages[i])
+    # Ensure appearances persist
+    if "/AcroForm" in writer._root_object:
+        writer._root_object[NameObject("/AcroForm")].update({NameObject("/NeedAppearances"): BooleanObject(True)})
+
+    # Remove page 2 then page 1 (remove higher index first)
+    if len(writer.pages) >= 2:
+        writer.remove_page(1)
+        writer.remove_page(0)
 
     buf = io.BytesIO()
     writer.write(buf)
     return buf.getvalue()
 
 
-def row_all_blank(row: pd.Series, cols: List[str]) -> bool:
+def row_all_blank(row: pd.Series, cols: list) -> bool:
     return all(is_blank(row.get(c)) for c in cols)
 
 
 # -----------------------
-# GENERATE ENDPOINT
+# GENERATE
 # -----------------------
 @app.post("/generate")
 async def generate(password: str = Form(...), excel: UploadFile = File(...)):
@@ -222,22 +217,19 @@ async def generate(password: str = Form(...), excel: UploadFile = File(...)):
     if not os.path.exists(template_path):
         raise HTTPException(status_code=500, detail=f"Missing template on server: {template_path}")
 
-    # Read Excel
     try:
         excel_bytes = await excel.read()
         df = pd.read_excel(io.BytesIO(excel_bytes), dtype=object)
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Failed to read Excel: {e}")
 
-    # Required for filenames
     missing_required = [c for c in (COL_RECIPIENT, COL_YEAR) if c not in df.columns]
     if missing_required:
         raise HTTPException(
             status_code=400,
-            detail=f"Excel missing required columns: {missing_required}. Make sure header row matches exactly.",
+            detail=f"Excel missing required columns: {missing_required}. Make sure headers match exactly.",
         )
 
-    # Build ZIP in memory
     zip_buf = io.BytesIO()
     with zipfile.ZipFile(zip_buf, "w", compression=zipfile.ZIP_DEFLATED) as z:
         count = 0
@@ -250,17 +242,12 @@ async def generate(password: str = Form(...), excel: UploadFile = File(...)):
             recipient = clean_filename(row.get(COL_RECIPIENT))
             year = safe_year_value(row.get(COL_YEAR))
 
-            # Generate full PDF (all pages)
             full_pdf = write_full_pdf_bytes(template_path, row)
-
-            # Generate contractor copy (pages 3-6 only)
             contractor_pdf = contractor_copy_bytes(full_pdf)
 
-            # Filenames
             full_name = f"1099 NEC - {recipient} - {year}.pdf"
             contractor_name = f"1099 NEC - {recipient} - Contractor's Copy - {year}.pdf"
 
-            # Add to ZIP
             z.writestr(full_name, full_pdf)
             z.writestr(f"{CONTRACTOR_FOLDER}/{contractor_name}", contractor_pdf)
 
